@@ -8,6 +8,7 @@
 import cv2
 import numpy as np
 import math
+import heapq
 
 # get biggest contour by area
 def get_max_contour(contours):
@@ -42,7 +43,7 @@ def crop(image, border, range=100):
 # process each image
 def process_image(name):
     # load image
-    img = cv2.imread(f"assets/{name}.JPEG")
+    img = cv2.imread(f"assets/v3/{name}.JPEG")
     height, width = img.shape[:2]
     center_x = width // 2
 
@@ -78,6 +79,29 @@ def process_image(name):
 
     return img_cropped, border
 
+# get the average disparity among the best matches
+def get_disparities(matches, k, border, x_mid):
+    heap = []
+    for match in matches:
+        left_pt = k[0][match.queryIdx].pt
+        right_pt = k[1][match.trainIdx].pt
+
+        # check relative position to anchor x
+        if ((left_pt[0] - x_mid) * (right_pt[0] - x_mid) < 0): continue
+
+        # avg y distance
+        dist_y = (abs(left_pt[1] - 100) + abs(right_pt[1] - 100)) // 2
+
+        # calculate disparity
+        left_x = border[0][0] - left_pt[0]
+        right_x = border[1][0] - right_pt[0]
+        disparity = abs(left_x - right_x)
+
+        # push y, disparity pair
+        heapq.heappush(heap, (dist_y, disparity))
+    
+    return heap
+
 # find the best anchor between two images and return depth using disparity calculation
 def calc_depth(left, right, left_border, right_border):
     # use ORB to detect keypoints
@@ -92,28 +116,14 @@ def calc_depth(left, right, left_border, right_border):
     if len(matches) > 10:
         matches = sorted(matches, key=lambda x: x.distance)
         matches = matches[:10]
-    elif not matches: return None
+    else: return None
 
-    # choose closest match as anchor
-    closest = None
-    dist_min = float('inf')
-    for match in matches:
-        left_pt = left_k[match.queryIdx].pt
-        right_pt = right_k[match.trainIdx].pt
-
-        # avg distance
-        dist_y = (abs(left_pt[1] - 100) + abs(right_pt[1] - 100)) // 2
-        if dist_y < dist_min: 
-            dist_min = dist_y
-            closest = (left_pt, right_pt)
-
-    # calculate disparity
-    left_x = left_border[0] - closest[0][0]
-    right_x = right_border[0] - closest[1][0]
-    disparity = abs(left_x - right_x)
-    print(f"Left anchor: {left_pt}. X-distance to boundary: {left_x} pixels")
-    print(f"Right anchor: {right_pt}. X-distance to boundary: {right_x} pixels")
-    print(f"Disparity: {disparity}")
+    # get average disparity to best anchors
+    disparities = get_disparities(matches, (left_k, right_k), (left_border, right_border), left.shape[1])
+    for item in disparities:
+        print(item)
+        
+    return
 
     # vars
     baseline = 30.48
@@ -121,19 +131,19 @@ def calc_depth(left, right, left_border, right_border):
     # focal length = 26mm. pixel size = 1.7um
 
     # calculate depth
-    if disparity > 0:
-        depth = (focal_len * baseline) / disparity
+    if avg_disparity > 1:
+        depth = (focal_len * baseline) / avg_disparity
         print(f"Distance to boundary: {depth:.2f} cm")
     else:
         print("Disparity is too small to calculate depth")
 
     # save imgs
     matches_img = cv2.drawMatches(left, left_k, right, right_k, matches[:10], None)
-    anchor_left = cv2.circle(left, tuple(math.floor(i) for i in closest[0]), 30, (0, 255, 0), 3)
-    anchor_right = cv2.circle(right, tuple(math.floor(i) for i in closest[1]), 30, (0, 255, 0), 3)
+    #anchor_left = cv2.circle(left, tuple(math.floor(i) for i in closest[0]), 30, (0, 255, 0), 3)
+    #anchor_right = cv2.circle(right, tuple(math.floor(i) for i in closest[1]), 30, (0, 255, 0), 3)
     cv2.imwrite("output/all_matches.JPEG", matches_img)
-    cv2.imwrite("output/left/7_anchor.JPEG", anchor_left)
-    cv2.imwrite("output/right/7_anchor.JPEG", anchor_right)
+    #cv2.imwrite("output/left/7_anchor.JPEG", anchor_left)
+    #cv2.imwrite("output/right/7_anchor.JPEG", anchor_right)
 
     return depth
 
