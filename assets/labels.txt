@@ -1,0 +1,6 @@
+1_left.JPEG 1113
+1_right.JPEG 1121
+2_left.JPEG 1126
+2_right.JPEG 1029
+3_left.JPEG 1156
+3_right.JPEG 1112

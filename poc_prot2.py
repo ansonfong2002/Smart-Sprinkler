@@ -1,80 +1,97 @@
 # Proof of Concept 2
-#
-# Performs preprocessing, isolates largest green and non-green contours by area
-# Identifies boundary by intersecting contour polygon with centerline vertical
-# Overlays images on top of one another
 
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.applications import MobileNet
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import cv2
 import numpy as np
+import os
 
-# get biggest contour by area
-def get_max_contour(contours):
-    if contours:
-        return max(contours, key=cv2.contourArea)
-    return None
+import matplotlib.pyplot as plt
 
-# get intersection
-def get_contour_intersection(contour, inv_contour, height, center_x):
-    last_on = 0
-    for y in range(height - 1, -1, -1):
-        # on green contour?
-        on_contour = cv2.pointPolygonTest(contour, (center_x, y), False)
-        if on_contour > 0:
-            last_on = y
-            continue
+SIZE = 224
 
-        # if transition to inverted contour is within 3 pixels
-        # limitation: if there are "islands" in the contour map, the intersection point may be skewed in the y direction
-        on_inv_contour = cv2.pointPolygonTest(inv_contour, (center_x, y), False)
-        if on_inv_contour == 1 and y - last_on < 3: return (center_x, y)
-        
-    return None
+# mask and resize image
+def preprocess_img(path):
+    image = cv2.imread(path)
+    height, _, _ = image.shape
+    resized = cv2.resize(image, (SIZE, SIZE))
 
-def process_img(name):
-    # load image
-    img = cv2.imread(f"assets/{name}.JPEG")
-    height, width = img.shape[:2]
-    center_x = width // 2
-
-    # gaussian blur and HSV color segments
-    img_blur = cv2.GaussianBlur(img, (21, 21), 0)
-    img_hsv = cv2.cvtColor(img_blur, cv2.COLOR_BGR2HSV)
-
-    # create masks to detect green regions
     green_lower_bound = np.array([35, 40, 40])
     green_upper_bound = np.array([85, 255, 255])
+    img_hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
     img_mask = cv2.inRange(img_hsv, green_lower_bound, green_upper_bound)
-    img_mask_inv = cv2.bitwise_not(img_mask)
+    img_mask_3ch = cv2.merge([img_mask, img_mask, img_mask])
 
-    # find max contours
-    contours, _ = cv2.findContours(img_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    inv_contours, _ = cv2.findContours(img_mask_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    max_contour = get_max_contour(contours)
-    max_inv_contour = get_max_contour(inv_contours)
+    return img_mask_3ch.astype('float32') / 255.0, height
 
-    # find contour intersection and visualize
-    border = get_contour_intersection(max_contour, max_inv_contour, height, center_x)
-    if border: cv2.circle(img, border, 30, (0, 255, 0), 3)
+# load normalized images and labels
+def load_data(input_path, label_path):
+    images = []
+    labels = []
+    with open(label_path, 'r') as file:
+        for line in file.readlines():
+            name, value = line.strip().split()
+            path = os.path.join(input_path, name)
+            image, height = preprocess_img(path)
+            images.append(image)
+            labels.append(int(value))
 
-    # save images
-    cv2.imwrite(f"output/{name}/1_blur.JPEG", img_blur)
-    cv2.imwrite(f"output/{name}/2_hsv.JPEG", img_hsv)
-    cv2.imwrite(f"output/{name}/3_mask.JPEG", img_mask)
-    cv2.imwrite(f"output/{name}/4_mask_inv.JPEG", img_mask_inv)
-    cv2.imwrite(f"output/{name}/5_marked.JPEG", img)
+    return np.array(images), np.array(labels)
 
-    return img, border
+# build feature extraction model
+def build():
+    base = MobileNet(
+        input_shape=(224, 224, 3),
+        include_top=False,
+        weights='imagenet'
+    )
 
-# MAIN TASK
-def process_imgs():
-    left_img, left_border = process_img("left")
-    right_img, right_border = process_img("right")
+    base.trainable = False
+    model = models.Sequential([
+        base,
+        layers.GlobalAveragePooling2D(),
+        layers.Dense(128, activation="relu"),
+        layers.Dropout(0.3),
+        layers.Dense(1, activation="sigmoid")
+    ])
 
-    print(f"Left: {left_border}")
-    print(f"Right: {right_border}")
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss="binary_crossentropy",
+        metrics=["accuracy"]
+    )
 
-    overlay_img = cv2.addWeighted(left_img, 0.5, right_img, 0.5, 0)
-    cv2.imwrite("output/overlay.JPEG", overlay_img)
+    return model
 
+# main
 if __name__ == "__main__":
-    process_imgs()
+    images, labels = load_data("assets/images/", "assets/labels.txt")
+    
+    model = build()
+
+    history = model.fit(
+        images, labels,
+        validation_data=(images, labels),
+        epochs=20,
+        batch_size=32
+    )
+
+    loss, acc = model.evaluate(images, labels)
+    print(f"Evaluation = Loss: {loss}, Accuracy: {acc}")
+
+    # Plot training & validation loss
+    plt.plot(history.history['loss'], label='Train Loss')
+    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.title('Model Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig("loss_plot.png")
+    plt.close()
+
+    predictions = model.predict(images)
+    predictions = (predictions > 0.5).astype("int32")
+    for i, pred in enumerate(predictions):
+        print(f"Predicted: {pred[0]}, Actual: {labels[i]}")
