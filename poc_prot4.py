@@ -100,7 +100,7 @@ def label_border(border, img):
 # process each image
 def process_image(name):
     # load image
-    img = cv2.imread(f"assets/v2/{name}.JPEG")
+    img = cv2.imread(f"assets/v1/{name}.JPEG")
     height, width = img.shape[:2]
     center_x = width // 2
 
@@ -129,7 +129,7 @@ def process_image(name):
 
     return img, border
 
-def crop(img, border, height):
+def crop(imgs, borders):
     max_y = 0
     min_y = float('inf')
     for point in border:
@@ -145,6 +145,8 @@ def crop(img, border, height):
 def process_imgs():
     left, left_border = process_image("left")
     right, right_border = process_image("right")
+
+    crop((left, right), (left_border, right_border))
 
 if __name__ == "__main__":
     process_imgs()
