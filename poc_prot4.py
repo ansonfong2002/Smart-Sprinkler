@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 import math
 
+buffer = 50
+
 # returns where the longest unmasked strip starts
 def longest(line, height):
     max_stretch = 0
@@ -97,16 +99,26 @@ def label_border(border, img):
     for point in border: cv2.circle(img, point, 30, (0, 255, 0), 3)
     return img
 
+# crops
+def crop(img, border, height):
+    avg = 0
+    for point in border: avg += point[1]
+    avg = int(avg / len(border))
+
+    min_y = max(0, avg - buffer)
+    max_y = min(height, avg + buffer)
+
+    return cv2.cvtColor(img[min_y:max_y, :], cv2.COLOR_BGR2GRAY) 
+
 # process each image
 def process_image(name):
     # load image
-    img = cv2.imread(f"assets/v1/{name}.JPEG")
+    img = cv2.imread(f"assets/v3/{name}.JPEG")
     height, width = img.shape[:2]
     center_x = width // 2
 
-    # gaussian blur and HSV color segments
-    img_blur = cv2.GaussianBlur(img, (21, 21), 0)
-    img_hsv = cv2.cvtColor(img_blur, cv2.COLOR_BGR2HSV)
+    # HSV color segments
+    img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     # create masks to detect green regions
     green_lower_bound = np.array([35, 40, 40])
@@ -120,45 +132,85 @@ def process_image(name):
     # label images
     img_marked = label_border(border, img.copy())
 
-    # canny edge detector
-    # img_edges = cv2.Canny(img_crop, threshold1=100, threshold2=400)
+    # crop image around border
+    img_crop = crop(img, border, height)
 
     # save images
     cv2.imwrite(f"output/{name}/1_mask.JPEG", img_mask)
     cv2.imwrite(f"output/{name}/2_marked.JPEG", img_marked)
+    cv2.imwrite(f"output/{name}/3_crop.JPEG", img_crop)
 
-    return img, border
+    return img_crop, border
 
-def crop(imgs, borders):
-    max_y = 0
-    min_y = float('inf')
-    for point in border:
-        if point[1] > max_y: max_y = point[1]
-        if point[1] < min_y: min_y = point[1]
+# remove outliers from disparity lists
+def remove_outliers(x_distances, y_distances):
+    q1 = np.percentile(x_distances, 25)
+    q3 = np.percentile(x_distances, 75)
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
 
-    min_y = max(0, min_y - 100)
-    max_y = min(height, max_y + 100)
+    filtered = [(x, y) for x, y in zip(x_distances, y_distances) if lower <= x <= upper]
+    return zip(*filtered)
 
-    return cv2.cvtColor(img[min_y:max_y, :], cv2.COLOR_BGR2GRAY)
+# perform a block match between left and right images
+def calc_depth(left, right):
+    # SIFT feature detect
+    sift = cv2.SIFT_create()
+    kp1, des1 = sift.detectAndCompute(left, None)
+    kp2, des2 = sift.detectAndCompute(right, None)
+
+    # brute force matcher
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+    matches = bf.match(des1, des2)
+    matches = sorted(matches, key=lambda x:x.distance)[:10]
+
+    # get x disparities and distance to midline
+    x_distances = []
+    y_distances = []
+    for m in matches:
+        left_kp = kp1[m.queryIdx]
+        right_kp = kp2[m.trainIdx]
+        disparity = left_kp.pt[0] - right_kp.pt[0]
+        if disparity > 0: 
+            x_distances.append(disparity)
+            y_distances.append(0.5 * (abs(right_kp.pt[1] - buffer) + abs(left_kp.pt[1] - buffer)))
+
+    # calculate weighted average: closest to midline gets 100% influence, others get 30% scaled by y_distance
+    x_distances, y_distances = remove_outliers(x_distances, y_distances)
+    min_y = min(y_distances)
+    if min_y == 0: weights = [1 if y == min_y else 0.3 * 1 / y for y in y_distances]
+    else:
+        weights = [min_y / y if y == min_y else 0.3 * min_y / y for y in y_distances]
+        weighted_sum = sum(x * weight for x, weight in zip(x_distances, weights))
+    weighted_avg = weighted_sum / sum(weights)
+
+    # vars
+    baseline = 30.48
+    focal_len = 15294
+    # focal length = 26mm. pixel size = 1.7um
+
+    # calculate depth
+    if weighted_avg > 1:
+        depth = (focal_len * baseline) / weighted_avg
+        print(f"Distance to boundary: {depth:.2f} cm")
+    else:
+        print("Disparity is too small to calculate depth.")
+
+    # save image
+    img_matches = cv2.drawMatches(left, kp1, right, kp2, matches, None, flags=2)
+    cv2.imwrite(f"output/match.JPEG", img_matches)
+
+    return depth
 
 # task flow
 def process_imgs():
+    # get edge detection around detected border
     left, left_border = process_image("left")
     right, right_border = process_image("right")
 
-    crop((left, right), (left_border, right_border))
+    # calculate disparity and depth
+    calc_depth(left, right)
 
 if __name__ == "__main__":
     process_imgs()
-
-
-# IDEA 1
-# use dp solution to get an approximate border
-# crop left and right images around the border
-# canny edge detect on the cropped images
-# either use ORB and match/anchor or train a model to find disparity
-
-# IDEA 2
-# train a model to classify grass
-# walk up images to find border using model
-# ====
