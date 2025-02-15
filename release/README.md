@@ -1,0 +1,1 @@
+virtual environment uses --system-site-packages since gpiozero is installed via apt install python3-gpiozero
