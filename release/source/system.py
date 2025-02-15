@@ -19,9 +19,10 @@ class Squirt:
         self.log.append(f"STOPS {config[4]}")
         self.log.append(f"STEPS PER REV {config[5]}")
 
-    # translate distance to valve position (MAX 5.0)
+    # translate distance to valve position (MAX 1.0)
     def normalize(self, value):
-        return value
+        # linear regression model, R2 = 0.9943
+        return (value * 0.1445) - 230.4
 
     # sets valve position
     def set_valve_pos(self, position):
