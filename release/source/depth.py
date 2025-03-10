@@ -203,7 +203,9 @@ def calc_depth(left, right, path):
 def process_imgs(dir):
     # get edge detection around detected border
     left = cv2.imread(f"{dir}/temp/left.JPEG")
+    left = cv2.rotate(left, cv2.ROTATE_90_COUNTERCLOCKWISE)
     right = cv2.imread(f"{dir}/temp/right.JPEG")
+    right = cv2.rotate(right, cv2.ROTATE_90_CLOCKWISE)
     left_crop, left_border = process_image(left, f"{dir}/cv/left")
     right_crop, right_border = process_image(right, f"{dir}/cv/right")
 

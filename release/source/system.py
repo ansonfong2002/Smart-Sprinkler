@@ -9,7 +9,7 @@ class Squirt:
         self.valve = PWMOutputDevice(config[0])
         self.pulse = OutputDevice(config[1])
         self.direction = OutputDevice(config[2])
-        self.frequency = config[3]
+        self.valve.frequency = config[3]
         self.stops = config[4]
         self.steps_per_rev = config[5]
         self.log = [f"VALVE PIN {config[0]}"]
@@ -19,10 +19,13 @@ class Squirt:
         self.log.append(f"STOPS {config[4]}")
         self.log.append(f"STEPS PER REV {config[5]}")
 
+        self.set_valve_pos(0)
+
     # translate distance to valve position (MAX 1.0)
     def normalize(self, value):
         # linear regression model, R2 = 0.9943
-        return (value * 0.1445) - 230.4
+        #return (value * 0.0006253) + 0.1446
+        return (value * 0.0006908) + 0.1706
 
     # sets valve position
     def set_valve_pos(self, position):
@@ -34,13 +37,14 @@ class Squirt:
     def valve_cycle(self, limit):
         normalized = self.normalize(limit)
         self.log.append(f"VALVE CYL {normalized}")
-        pos = 0.1
+        pos = 0.2
         while pos < normalized:
             self.set_valve_pos(pos)
-            time.sleep(2)
-            pos += 0.1
+            time.sleep(4)
+            pos += 0.01
 
         self.set_valve_pos(0)
+        time.sleep(5)
 
     # toggle direction
     def toggle_direction(self):
@@ -50,6 +54,7 @@ class Squirt:
     # perform STEPS PER REV / NUM STEPS steps
     def rotate(self):
         steps = int(self.steps_per_rev / self.stops)
+    
         for i in range(steps):
             self.pulse.on()
             time.sleep(0.001)
@@ -59,3 +64,6 @@ class Squirt:
 
     # get log
     def get_log(self): return self.log
+
+    # clean log
+    def clear_log(self): self.log = []

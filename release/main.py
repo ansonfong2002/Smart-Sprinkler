@@ -1,6 +1,8 @@
 import os
+import subprocess
 import sys
-import source.depth
+import time
+import source.depth as depth
 from source.system import Squirt 
 
 def process_config(dir):
@@ -11,33 +13,46 @@ def process_config(dir):
     
     return config
 
+def motor_tune():
+    device = Squirt(config)
+    while True:
+        ready = input("<> Enter T to toggle direction, enter to rotate... ")
+        if ready == "T":
+            device.toggle_direction()
+        else:
+            device.rotate()
+
+
 # start system
 def start(config, dir):
     # set up device pins
     device = Squirt(config)
 
-    # test run:
-        # take snapshot
-        # run depth processing
-        # send value to device.valve_cycle
-        # device.rotate
-    os.system(f"libcamera-still --camera 0 -o {dir}/temp/left.JPEG")
-    os.system(f"libcamera-still --camera 1 -o {dir}/temp/right.JPEG")
-    distance = depth.process_imgs(dir)
-    print(f"Distance to boundary: {distance:.2f} cm")
+    ready = input("<> Initialized, enter any key to start...\n")
 
-    #device.valve_cycle(distance)
+    print("<> Capturing stereo images...")
+    subprocess.run(f"libcamera-still --camera 0 -o {dir}/temp/left.JPEG", shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(" > Left capture done")
+    subprocess.run(f"libcamera-still --camera 1 -o {dir}/temp/right.JPEG", shell=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(" > Right capture done")
+    
+    distance = depth.process_imgs(dir)
+    print(f" > Distance to boundary: {distance:.2f} cm")
 
     # for each stop in num stops
         # take snapshots, load into temp
-        # run depth processing
+        # run depth processing, save in cv
         # send value to device.valve_cycle
         # device.rotate
     # upon completion, toggle direction and spin back
 
     # get log
     device_log = device.get_log()
-    print(device_log)
+    with open("log.txt", 'a') as logfile:
+        for entry in device_log:
+            logfile.write(entry)
+            logfile.write("\n")
+    device.clear_log()
 
 # main
 if __name__ == "__main__":
@@ -46,7 +61,11 @@ if __name__ == "__main__":
     config = process_config(dir)
 
     # start system
-    start(config, dir)
-
+    try: 
+        #motor_tune()
+        start(config, dir)
+    except KeyboardInterrupt: pass
+    
     # clean up locks
+    print("\n<> System terminating\n")
     os.remove(".lgd-nfy0")
